@@ -1,0 +1,5 @@
+aws_profile  = "default"
+github_owner = "ArchitectKeita"
+github_repo  = "aws-cicd-pipeline"
+# Set to false if an earlier project already created the GitHub OIDC provider in this account.
+create_oidc_provider = true

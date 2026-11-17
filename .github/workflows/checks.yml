@@ -1,0 +1,55 @@
+# Shared quality gate: tests, Terraform fmt/validate, security scan. No AWS access at all.
+# Called by CI (every pull request) and by Deploy (every merge), so both run the exact same checks.
+name: Checks
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.10.5"
+  TF_IN_AUTOMATION: "true"
+  AWS_REGION: us-east-2
+
+jobs:
+  test:
+    name: Unit tests + lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check service
+      - run: pytest -q service/tests
+
+  terraform-static:
+    name: Terraform fmt + validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - run: terraform fmt -check -recursive -diff
+      - name: Validate both layers
+        run: |
+          for dir in bootstrap service; do
+            terraform -chdir="$dir" init -backend=false -input=false
+            terraform -chdir="$dir" validate
+          done
+
+  security:
+    name: Security scan (Checkov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      # Scans the Terraform AND these workflow files. Every accepted finding is skipped inline, with its reason.
+      - run: checkov --directory . --framework terraform github_actions --quiet --compact --skip-download

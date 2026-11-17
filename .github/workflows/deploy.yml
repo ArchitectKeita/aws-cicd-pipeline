@@ -1,0 +1,164 @@
+# Deploy: every merge to main.
+#   1. CI again (tests, fmt/validate, security scan)
+#   2. plan with the read-only role, saved and shown in the run summary
+#   3. PAUSE: the "production" environment needs a human to approve that exact plan
+#   4. apply that saved plan with the apply role (only assumable from the production environment)
+#   5. smoke test the live URL: is /health OK, and is it serving THIS commit?
+#   6. if not, point the "live" alias back at the previous version and fail loudly
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false   # never kill a deploy halfway through
+
+env:
+  TF_VERSION: "1.10.5"
+  TF_IN_AUTOMATION: "true"
+  AWS_REGION: us-east-2
+  FUNCTION: cicd-demo        # must match service_name
+
+jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
+
+  plan:
+    name: Plan
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: service
+    outputs:
+      changes: ${{ steps.plan.outputs.changes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          role-session-name: deploy-${{ github.run_id }}-plan
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Init
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=service/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true"
+      - name: Plan
+        id: plan
+        env:
+          TF_VAR_commit_sha: ${{ github.sha }}
+          TF_VAR_boundary_arn: ${{ vars.BOUNDARY_POLICY_ARN }}
+        run: |
+          set +e
+          terraform plan -input=false -no-color -lock-timeout=2m -detailed-exitcode -out=tfplan
+          code=$?
+          set -e
+          if [ "$code" = "1" ]; then exit 1; fi
+          echo "changes=$([ "$code" = "2" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Plan for \`${GITHUB_SHA::7}\` — approve the production deploy to apply exactly this"
+            echo '```hcl'
+            terraform show -no-color tfplan | head -c 60000
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # The reviewer approves THIS plan. The apply job applies this file, not a fresh plan.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: |
+            service/tfplan
+            service/.build/app.zip
+            service/.terraform.lock.hcl
+          retention-days: 3
+          include-hidden-files: true
+
+  apply:
+    name: Apply → smoke test → auto-rollback
+    needs: plan
+    if: needs.plan.outputs.changes == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: production          # required reviewers on this environment = the manual approval gate
+      url: ${{ steps.out.outputs.url }}
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          role-session-name: deploy-${{ github.run_id }}-apply
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: service
+      - name: Init
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=service/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="encrypt=true" \
+            -backend-config="use_lockfile=true"
+      - name: Remember what's live now (the rollback target)
+        id: before
+        run: |
+          prev=$(aws lambda get-alias --function-name "$FUNCTION" --name live --query FunctionVersion --output text 2>/dev/null || echo none)
+          echo "version=$prev" >> "$GITHUB_OUTPUT"
+          echo "Live before deploy: $prev"
+      - name: Apply the approved plan
+        run: terraform apply -input=false -lock-timeout=2m tfplan
+      - name: Outputs
+        id: out
+        run: |
+          echo "url=$(terraform output -raw url)" >> "$GITHUB_OUTPUT"
+          echo "version=$(terraform output -raw live_version)" >> "$GITHUB_OUTPUT"
+      - name: Smoke test
+        id: smoke
+        run: ../scripts/smoke_test.sh "${{ steps.out.outputs.url }}" "$GITHUB_SHA"
+      - name: Auto-rollback
+        if: failure() && steps.smoke.outcome == 'failure' && steps.before.outputs.version != 'none'
+        env:
+          PREV: ${{ steps.before.outputs.version }}
+        run: |
+          echo "::error::Smoke test failed on v${{ steps.out.outputs.version }}. Rolling 'live' back to v$PREV."
+          aws lambda update-alias --function-name "$FUNCTION" --name live --function-version "$PREV" > /dev/null
+          ../scripts/smoke_test.sh "${{ steps.out.outputs.url }}" ""   # healthy again? (any commit)
+          {
+            echo "## ⏪ Rolled back"
+            echo "v${{ steps.out.outputs.version }} (\`${GITHUB_SHA::7}\`) failed its smoke test. **live** is back on **v$PREV** and healthy."
+            echo "Fix forward with a new pull request; the next deploy re-points the alias."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "## ✅ Live"
+            echo "\`${GITHUB_SHA::7}\` is serving at ${{ steps.out.outputs.url }} as Lambda **v${{ steps.out.outputs.version }}** (rollback target: v${{ steps.before.outputs.version }})."
+          } >> "$GITHUB_STEP_SUMMARY"
