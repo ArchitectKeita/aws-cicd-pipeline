@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r requirements-dev.txt
+      - run: pip install -r requirements-test.txt
       - run: ruff check service
       - run: pytest -q service/tests
 
@@ -50,6 +50,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r requirements-dev.txt
+      - run: pip install -r requirements-scan.txt
       # Scans the Terraform AND these workflow files. Every accepted finding is skipped inline, with its reason.
       - run: checkov --directory . --framework terraform github_actions --quiet --compact --skip-download

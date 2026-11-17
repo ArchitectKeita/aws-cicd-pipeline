@@ -85,7 +85,8 @@ About **$0/month**: Lambda, the HTTP API and a few log lines sit inside the free
 ## Run the checks locally
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements-test.txt        # Checkov pins different shared libs:
+pip install -r requirements-scan.txt        # install it in its own venv
 ruff check . && pytest -q
 checkov --directory . --framework terraform github_actions --quiet --compact
 SMOKE_ATTEMPTS=3 scripts/smoke_test.sh https://<api-url> <commit-sha>
