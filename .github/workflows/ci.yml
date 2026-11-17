@@ -58,7 +58,7 @@ jobs:
           terraform plan -input=false -no-color -lock-timeout=2m -out=tfplan
           terraform show -no-color tfplan > plan.txt
       - name: Comment the plan on the PR
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
