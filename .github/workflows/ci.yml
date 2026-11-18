@@ -20,7 +20,8 @@ jobs:
 
   plan:
     name: Terraform plan → PR comment
-    if: github.event.pull_request.head.repo.full_name == github.repository  # forks get no AWS access
+    # Forks and Dependabot get no AWS access (GitHub withholds the OIDC token from both), so they run the checks only.
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
     needs: checks
     runs-on: ubuntu-latest
     permissions:
