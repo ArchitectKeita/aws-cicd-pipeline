@@ -152,7 +152,7 @@ data "aws_iam_policy_document" "apply" {
   }
   statement {
     sid       = "ManageApi"
-    actions   = ["apigateway:GET", "apigateway:POST", "apigateway:PUT", "apigateway:PATCH", "apigateway:DELETE"]
+    actions   = ["apigateway:GET", "apigateway:POST", "apigateway:PUT", "apigateway:PATCH", "apigateway:DELETE", "apigateway:TagResource", "apigateway:UntagResource"]
     resources = local.api_arns
   }
   statement {
