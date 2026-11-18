@@ -1,5 +1,8 @@
 aws_profile  = "default"
 github_owner = "ArchitectKeita"
 github_repo  = "aws-cicd-pipeline"
+# Numeric IDs GitHub now pins into its tokens (public). Update them if you fork this to another repo.
+github_owner_id = 39179977
+github_repo_id  = 1461980926
 # Set to false if an earlier project already created the GitHub OIDC provider in this account.
 create_oidc_provider = true

@@ -7,7 +7,9 @@ data "aws_partition" "p" {}
 locals {
   account = data.aws_caller_identity.me.account_id
   repo    = "${var.github_owner}/${var.github_repo}"
-  issuer  = "token.actions.githubusercontent.com"
+  # Accept both subject formats: the classic name-only one and GitHub's newer ID-pinned one.
+  subjects = ["repo:${local.repo}", "repo:${var.github_owner}@${var.github_owner_id}/${var.github_repo}@${var.github_repo_id}"]
+  issuer   = "token.actions.githubusercontent.com"
 }
 
 resource "aws_iam_openid_connect_provider" "github" {
@@ -45,10 +47,7 @@ data "aws_iam_policy_document" "trust_plan" {
     condition {
       test     = "StringEquals"
       variable = "${local.issuer}:sub"
-      values = [
-        "repo:${local.repo}:pull_request",
-        "repo:${local.repo}:ref:refs/heads/main",
-      ]
+      values   = flatten([for sub in local.subjects : ["${sub}:pull_request", "${sub}:ref:refs/heads/main"]])
     }
   }
 }
@@ -68,7 +67,7 @@ data "aws_iam_policy_document" "trust_apply" {
     condition {
       test     = "StringEquals"
       variable = "${local.issuer}:sub"
-      values   = ["repo:${local.repo}:environment:production"]
+      values   = [for sub in local.subjects : "${sub}:environment:production"]
     }
   }
 }
