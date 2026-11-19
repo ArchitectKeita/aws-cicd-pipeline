@@ -11,7 +11,7 @@ variable "aws_profile" {
 
 variable "github_owner" {
   type    = string
-  default = "ArchitectKeita"
+  default = "SaintKeita"
 }
 
 variable "github_repo" {

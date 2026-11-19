@@ -1,5 +1,5 @@
 aws_profile  = "default"
-github_owner = "ArchitectKeita"
+github_owner = "SaintKeita"
 github_repo  = "aws-cicd-pipeline"
 # Numeric IDs GitHub now pins into its tokens (public). Update them if you fork this to another repo.
 github_owner_id = 39179977
